@@ -1,7 +1,7 @@
 (defproject cascalog-demo "0.1.0-SNAPSHOT"
   :description "The Cascalog demonstration for the Cambridge-NonDysFunctional-Programmers Meetup."
   :url "https://github.com/gareth625/cascalog-demo"
-  :main cam-cli.core
+  :main cam-clj.core
   :aot [cam-clj.core]
   :dependencies [[org.clojure/clojure "1.5.1"]
                  [cascalog "2.1.0"]
