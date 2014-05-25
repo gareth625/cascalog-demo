@@ -21,7 +21,44 @@ This repository works with a dataset of users and film ratings from MovieLens, s
     wget http://www.grouplens.org/system/files/ml-100k.zip
     unzip ml-100k.zip
 
-I'll refer to _resources/data/ml-100k_ through the demo although you should use the path you downloaded and extracted the data to.
+where I've assumed you are in the root directory of the casclog-demo project. I'll refer to _resources/data/ml-100k_ through the demo although you should use the path you downloaded and extracted the data to.
+
+## Cascalog
+
+Intro to Cascalog
+
+### Cascading
+
+Explain Cascading's taps and flow philosophy
+
+### Midje and Midje-Cascalog
+
+Demo some source and sink taps using Midje unit tests
+
+## Taps
+
+### Source Taps -- The Movie Lens Input
+
+Reading from the different type of delimited files, joining across data sets and print the output. Might use a reducer to filter implement take 10 or just a filter to get a specific user and their 20 movies.
+
+Use hfs-delimited and select-keys. Discuss the different file system sources, file vs directory, HDFS vs LFS and a note about S3.
+
+### Sink Taps
+
+stdout, produces and other midje-cascalog sinks, files (HDFS, LFS and S3)
+
+## k-means clustering
+
+Implement a k-means clustering algorithm on our files.
+
+## Incanter and Visualising the output
+
+This is a might be nice but if there is some structured clusters results they could be plotted using Incanter and possible the Gorilla repl which I've just discovered.
 
 ## Running on Amazon's [Elastic MapReduce](https://aws.amazon.com/elasticmapreduce/)
 
+Talk about using Lemur to work with EMR. Perhaps some best practices if I can remember them from the AWS summit. Worth bringing the Hadoop VM that Alex referenced in the Snowplow Google groups thread which probably allows you to run a local cluster.
+
+## Conclusions
+
+Sum up.
