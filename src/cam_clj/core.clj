@@ -106,7 +106,8 @@
       ; has been the case so far. Otherwise it assumes everything is an input
       ; until it comes across the :> macro. The :< are rarely required and I
       ; almost never use them. I do tend to be explicit about :> so the above
-      ; is not my normal coding style. I don't know what the canonical is.
+      ; is not my normal coding style. I don't know what the canonical is,
+      ; probably to use the implicit useage where possible. Who likes typing ;)
       (s/lower-case :< ?c-one :> ?column-one)
       (s/upper-case :< ?c-two :> ?column-two)))
 
