@@ -1,7 +1,9 @@
 (ns cam-clj.core
-  (:require [cascalog.api :refer :all])
+  (:require [cascalog.api :refer :all]
+            [clojure.string :as s])
   (:gen-class))
 
+; -----------------------
 ; Here we define the simplest type of source tap which is just a tuple of tuples.
 ;
 ; Cascalog represents the data moving between taps as a tuple of tuples. Each
@@ -21,7 +23,6 @@
     _and it also_,_has two rows_"
   [["_dAtA wITh_"   "_twO cOlumns_"]
    ["_And it AlSo_" "_hAs two rows_"]])
-
 
 (defn query-0
   []
@@ -46,14 +47,14 @@
     ; which have been sent from our source tap to variables called
     ; ?column-one and ?column-two. In this case, using naked tuples
     ; as the source, the order matters.
-    (source-data :> ?column-one ?column-two))))
+    (source-data ?column-one ?column-two))))
 
 ; Without all the annoying comments:
 (defn query-0-again
   []
   (?- (stdout)
       (<- [?column-one ?column-two]
-          (source-data :> ?column-one ?column-two))))
+          (source-data ?column-one ?column-two))))
 
 ; (query-0)
 ; (query-0-again)
@@ -72,25 +73,52 @@
   []
   (?<- (stdout)
        [?column-one ?column-two]
-       (source-data :> ?column-one ?column-two)))
+       (source-data ?column-one ?column-two)))
 
 ; (query-0-1)
 
-; This we can unit test... jumping to core_test.clj... and we're back.
-
+; -----------------------
+; Defining queries as functions
 
 (defn source-tap-with-sparkles
   "Using the <- marco we can define a source tap which might contain some data
   clean up before we return it to the user."
   []
+  ; Create a query with <- and name the two variables we wish to return, just
+  ; as before.
   (<- [?column-one ?column-two]
-      (source-data :> ?column-one ?column-two)))
+
+      ; This time when we read from our source stream the rows are not being
+      ; assigned to the returned variable but intermediate ones.
+      (source-data ?c-one ?c-two)
+
+      ; Now we don't want all the silly casing and instead need column one in
+      ; all lower case and column two as upper case.
+      ; Here I introduce two new symbols although only one is required.
+      ;   :< defines the list of input variables to the function, everything
+      ;      following it is given as an input to the funtion; and
+      ;   :> defines the list of output variables assigned the output of the
+      ;      function.
+      ;
+      ; The astute among you may notice I've been assigning data to variables
+      ; without the use of :> before. Cascalog is fairly intelligent and if
+      ; your function takes no arguments it assumes everything is output, as
+      ; has been the case so far. Otherwise it assumes everything is an input
+      ; until it comes across the :> macro. The :< are rarely required and I
+      ; almost never use them. I do tend to be explicit about :> so the above
+      ; is not my normal coding style. I don't know what the canonical is.
+      (s/lower-case :< ?c-one :> ?column-one)
+      (s/upper-case :< ?c-two :> ?column-two)))
 
 (defn query-1
   []
   (?<- (stdout)
        [?column-one ?column-two]
        ((source-tap-with-sparkles) :> ?column-one ?column-two)))
+
+(query-1)
+
+; This we can unit test... jumping to core_test.clj... and we're back.
 
 
 (defn -main
