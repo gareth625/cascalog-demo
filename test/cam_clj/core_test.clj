@@ -3,7 +3,7 @@
             [cascalog.api :refer :all]
             [clojure.test :refer :all]
             [midje.cascalog :refer [produces]]
-            [midje.sweet :refer [fact tabular throws]] :reload-all))
+            [midje.sweet :refer [fact tabular throws]] :reload))
 
 (tabular
  (fact
@@ -15,5 +15,6 @@
  ; I've opted for a trivial test case again where the source is sent
  ; straight to the sink and thus input and output is obviously the same.
  ?source-tap              ?expected-data
- source-tap-with-sparkles source-tap)
-
+ source-data              source-data
+; source-tap-with-sparkles source-data
+ )
