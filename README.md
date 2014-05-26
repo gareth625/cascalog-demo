@@ -47,6 +47,10 @@ Use hfs-delimited and select-keys. Discuss the different file system sources, fi
 
 stdout, produces and other midje-cascalog sinks, files (HDFS, LFS and S3)
 
+### A Note on :<< and :>>
+
+Dealing with wide sources, actually as easy as it looks when you the & in the right place.
+
 ## k-means clustering
 
 Implement a k-means clustering algorithm on our files.
