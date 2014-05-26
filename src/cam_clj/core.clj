@@ -22,35 +22,43 @@
   [["_dAtA wITh_"   "_twO cOlumns_"]
    ["_And it AlSo_" "_hAs two rows_"]])
 
-; This reads backwards :)
-; We use ?- macro to execute our query and the first argument to this macro
-; is the sink tap.
-(?-
 
- ; stdout is a function provided by the Cascalog API that returns a sink
- ; connected to stdout. Thus the result of our query will be sent to the
- ; console.
- (stdout)
+(defn query-0
+  []
+  ; This reads backwards :)
+  ; We use ?- macro to execute our query and the first argument to this macro
+  ; is the sink tap.
+  (?-
 
- ; The <- macro is used to define a query, where a query is a set of
- ; operations to transform the source data into the desired output for
- ; the sink.
- (<-
+   ; stdout is a function provided by the Cascalog API that returns a sink
+   ; connected to stdout. Thus the result of our query will be sent to the
+   ; console.
+   (stdout)
 
-  ; In this case our output is just the two columns.
-  [?column-one ?column-two]
+   ; The <- macro is used to define a query, where a query is a set of
+   ; operations to transform the source data into the desired output for
+   ; the sink.
+   (<-
 
-  ; which have been sent from our source tap to variables called
-  ; ?column-one and ?column-two. In this case, using naked tuples
-  ; as the source, the order matters.
-  (source-tap :> ?column-one ?column-two)))
+    ; In this case our output is just the two columns.
+    [?column-one ?column-two]
+
+    ; which have been sent from our source tap to variables called
+    ; ?column-one and ?column-two. In this case, using naked tuples
+    ; as the source, the order matters.
+    (source-data :> ?column-one ?column-two))))
 
 ; Without all the annoying comments:
-(?- (stdout)
-    (<- [?column-one ?column-two]
-        (source-tap :> ?column-one ?column-two)))
+(defn query-0-again
+  []
+  (?- (stdout)
+      (<- [?column-one ?column-two]
+          (source-data :> ?column-one ?column-two))))
 
-; Executing the above query gives us:
+; (query-0)
+; (query-0-again)
+
+; Executing either of the above query gives us:
 ;   RESULTS
 ;   -----------------------
 ;   _dAtA wITh_   _twO cOlumns_
@@ -60,9 +68,11 @@
 ; A much more common way of writting the above is to use the ?<- macro which,
 ; as you might guess, defines both defines and executes the query i.e. it's a
 ; combination of the ?- and <- macros. It's slight less verbose.
-(?<- (stdout)
-     [?column-one ?column-two]
-     (source-tap :> ?column-one ?column-two))
+(defn query-0-1
+  []
+  (?<- (stdout)
+       [?column-one ?column-two]
+       (source-data :> ?column-one ?column-two)))
 
 ; This we can unit test... jumping to core_test.clj... and we're back.
 
@@ -72,12 +82,13 @@
   clean up before we return it to the user."
   []
   (<- [?column-one ?column-two]
-      (source-tap :> ?column-one ?column-two)
-      ))
+      (source-data :> ?column-one ?column-two)))
 
-(?<- (stdout)
-     [?column-one ?column-two]
-     ((source-tap-with-sparkles) :> ?column-one ?column-two))
+(defn query-1
+  []
+  (?<- (stdout)
+       [?column-one ?column-two]
+       ((source-tap-with-sparkles) :> ?column-one ?column-two)))
 
 
 (defn -main
