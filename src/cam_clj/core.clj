@@ -1,5 +1,6 @@
 (ns cam-clj.core
   (:require [cascalog.api :refer :all]
+            [cascalog.more-taps :refer [hfs-delimited]]
             [clojure.string :as s])
   (:gen-class))
 
@@ -163,7 +164,7 @@
        [?column-one ?column-two]
        ((source-tap-with-sparkles) :> ?column-one ?column-two)))
 
-(query-1)
+; (query-1)
 
 ; Executing the above query gives us:
 ;   RESULTS
@@ -175,7 +176,168 @@
 ; and we've used non-nil variables for both as now we're only interested in
 ; variables with data.
 
-; This we can unit test... jumping to core_test.clj... and we're back.
+; This we can unit test... jumping to core_test.clj (assuming I ever get them
+; to work)... and we're back.
+
+; -----------------------
+; The MovieLens datasets
+;
+; For this we're going create source taps for three of the MoveLens data sets.
+; From the README in the MovieLen data set zip:
+;  u.data: The full u data set, 100000 ratings by 943 users on 1682 items. This
+;    is a tab separated list of:
+;      user id | item id | rating | timestamp
+;    The time stamps are unix seconds since 1/1/1970 UTC.
+;  u.item Information about the items (movies); this is a pipe separated list of:
+;      movie id | movie title | release date | video release date | IMDB URL
+;      | unknown | Action | Adventure | Animation | Children's | Comedy | Crime
+;      | Documentary | Drama | Fantasy | Film-Noir | Horror | Musical | Mystery
+;      | Romance | Sci-Fi | Thriller | War | Western
+;    The last 19 fields are the genres, a 1 indicates the movie is of that
+;    genre, a 0 indicates it is not; movies can be in several genres at once.
+;    The movie ids are the ones used in the u.data data set.
+;
+; So lets create some taps.
+
+(defn user-data
+  "Returns a source tap for the user data set user ID and item ID columns.
+
+  Takes the path to load the data from."
+  [src]
+  (let [; Here we define, as strings, the variable names for the columns and
+        ; the corresponding types that they should be represented as.
+        ; The data structure is my own devising, it's just to ensure they are
+        ; in the *correct order for the file* and the field is obviously
+        ; associated with it's type.
+        all-columns [["!user-id" Long]
+                     ["!item-id" Long]
+                     ["!rating" Long]
+                     ["!timestamp-raw" Long]]
+
+        ; Getting the fields and types is straight forward. I've also used an
+        ; array-map before and then you ask for keys and vals. Can't decide
+        ; which I prefer...
+        fields (map first all-columns)
+        classes (map second all-columns)
+
+        ; We are only interested in three of the columns so lets just select
+        ; those.
+        returned-columns ["!user-id" "!item-id" "!rating"]
+
+        ; A new function :)
+        ; hfs-delimited is used to read delimited files off the HDFS file
+        ; system however it can handle the local file system too so I tend
+        ; to just use this as typically the LFS is just used for small tests.
+        ; There is an lfs-delimited that takes the same options.
+        input-tap (hfs-delimited src ;; Input path, today only file:// but more
+                                     ;; typically hdfs:// or s3://
+                                 :delimiter "\t"
+                                 :outfields fields
+                                 :classes classes
+
+                                 ; Often delimited files have a header row with
+                                 ; the field names and it should be skipped (it
+                                 ; can't name the fields :(). Default is false
+                                 ; just highlighting it exists.
+                                 :skip-header? false)]
+
+    ; Now we return the fields that we want using select-fields. Note all this
+    ; has been done with lists of strings. The best documentation for
+    ; select-fields and hdf-delimited is still
+    ; https://groups.google.com/forum/#!msg/cascalog-user/t0LsCp3hxiQ/LDlQVAFE8gUJ
+    (select-fields input-tap returned-columns)))
+
+; This is where the data lives, this just demos creating the object.
+; (user-data "resources/data/ml-100k/u.data")
+
+; Now lets load the user item ratings which stores booleans as longs. Not
+; really ideal so lets convert them.
+; TODO Introduce defmapfn
+(defn long-to-bool
+  "Converts zero to false and one to true. Gets unhappy otherwise."
+  [& args]
+  (map #(case %
+         0 false
+         1 true
+         nil) args))
+
+(defn user-item
+  "Retuns a source tap for the user item ratings. Takes a path to the dataset."
+  [src]
+  (let [; Told you I've experimented with array-map. The order is important
+        ; as it *must* match the TSV column ordering. Less brackets with this
+        ; method.
+        all-columns (array-map "!movie-id" Long
+                               "!movie-title" String
+                               "!release-date" String
+                               "!video-release-date" String
+                               "!imdb-url" String
+                               "!unknown" String ;; really?!
+                               "!action-raw" Long
+                               "!adventure-raw" Long
+                               "!animation-raw" Long
+                               "!childrens-raw" Long
+                               "!comedy-raw" Long
+                               "!crime-raw" Long
+                               "!documentary-raw" Long
+                               "!drama-raw" Long
+                               "!fantasy-raw" Long
+                               "!film-noir-raw" Long
+                               "!horror-raw" Long
+                               "!musical-raw" Long
+                               "!mystery-raw" Long
+                               "!romance-raw" Long
+                               "!sci-fi-raw" Long
+                               "!thriller-raw" Long
+                               "!war-raw" Long
+                               "!western-raw" Long)
+        fields (keys all-columns)
+        classes (vals all-columns)
+
+        ; These are the fields we wish to convert to booleans and their final
+        ; names.
+        fields-to-bool (array-map "!action-raw" "!action"
+                                  "!adventure-raw" "!adventure"
+                                  "!animation-raw" "!animation"
+                                  "!childrens-raw" "!childrens"
+                                  "!comedy-raw" "!comedy"
+                                  "!crime-raw" "!crime"
+                                  "!documentary-raw" "!documentary"
+                                  "!drama-raw" "!drama"
+                                  "!fantasy-raw" "!fantasy"
+                                  "!film-noir-raw" "!film-noir"
+                                  "!horror-raw" "!horror"
+                                  "!musical-raw" "!musical"
+                                  "!mystery-raw" "!mystery"
+                                  "!romance-raw" "!romance"
+                                  "!sci-fi-raw" "!sci-fi"
+                                  "!thriller-raw" "!thriller"
+                                  "!war-raw" "!war"
+                                  "!western-raw" "!western")]
+    (<- ; I can still use the symbol form even when dealing with strings.
+        ; Note after all that bool work we don't want them!
+        [!movie-id !movie-title]
+
+        ; There are :<< and :<< marcos which mimic the :< and :> marcos but
+        ; instead of dealing with explicit symbols they deal with lists of
+        ; string. This is useful for dealing with a large number of fields,
+        ; especially when you want to keep them all. select-fields is only
+        ; useful when you want to reduce the number.
+        ((hfs-delimited src
+                        :delimiter "\t"
+                        :outfields fields
+                        :classes classes) :>> fields)
+
+        ; Here the :<< is required as it causes Cascalog to unpack the input
+        ; list and passes the variable values rather than passing a list of
+        ; strings. It's one of the cases where you need to be explicit about
+        ; the input operator. As normal you must be explicit about where the
+        ; output starts.
+        (long-to-bool :<< (keys fields-to-bool)
+                      :>> (vals fields-to-bool)))))
+
+; This is where the data lives, this just demos creating the object.
+; (user-item "resources/data/ml-100k/u.data")
 
 
 (defn -main
