@@ -117,7 +117,14 @@
        [?column-one ?column-two]
        ((source-tap-with-sparkles) :> ?column-one ?column-two)))
 
-(query-1)
+; (query-1)
+
+; Executing the above query gives us:
+;   RESULTS
+;   -----------------------
+;   _data with_    _TWO COLUMNS_
+;   _and it also_  _HAS TWO ROWS_
+;   -----------------------
 
 ; This we can unit test... jumping to core_test.clj... and we're back.
 
