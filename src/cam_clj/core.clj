@@ -74,6 +74,8 @@
        [?column-one ?column-two]
        (source-data :> ?column-one ?column-two)))
 
+; (query-0-1)
+
 ; This we can unit test... jumping to core_test.clj... and we're back.
 
 
