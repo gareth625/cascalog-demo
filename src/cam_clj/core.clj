@@ -22,7 +22,10 @@
     _data with_,_two columns_
     _and it also_,_has two rows_"
   [["_dAtA wITh_"   "_twO cOlumns_"]
-   ["_And it AlSo_" "_hAs two rows_"]])
+   ["_some rows_"    nil]
+   [nil             "_contain nils_"]
+   [nil             nil]
+   ["_And it AlSo_" "_hAs four rows_"]])
 
 (defn query-0
   []
@@ -41,20 +44,22 @@
    ; the sink.
    (<-
 
-    ; In this case our output is just the two columns.
-    [?column-one ?column-two]
+    ; In this case our output is just the two columns which are defined in the
+    ; next line. Note that the leading exclamation mark '!' is important, this
+    ; tells Cascalog the variables can be nil.
+    [!column-one !column-two]
 
     ; which have been sent from our source tap to variables called
-    ; ?column-one and ?column-two. In this case, using naked tuples
+    ; !column-one and !column-two. In this case, using naked tuples
     ; as the source, the order matters.
-    (source-data ?column-one ?column-two))))
+    (source-data !column-one !column-two))))
 
 ; Without all the annoying comments:
 (defn query-0-again
   []
   (?- (stdout)
-      (<- [?column-one ?column-two]
-          (source-data ?column-one ?column-two))))
+      (<- [!column-one !column-two]
+          (source-data !column-one !column-two))))
 
 ; (query-0)
 ; (query-0-again)
@@ -63,7 +68,10 @@
 ;   RESULTS
 ;   -----------------------
 ;   _dAtA wITh_   _twO cOlumns_
-;   _And it AlSo_ _hAs two rows_
+;   _some rows_   null
+;   null          _contain nils_
+;   null          null
+;   _And it AlSo_ _hAs four rows_
 ;   -----------------------
 
 ; A much more common way of writting the above is to use the ?<- macro which,
@@ -72,10 +80,48 @@
 (defn query-0-1
   []
   (?<- (stdout)
-       [?column-one ?column-two]
-       (source-data ?column-one ?column-two)))
+       [!column-one !column-two]
+       (source-data !column-one !column-two)))
 
 ; (query-0-1)
+
+; There are two other variable types in Cascalog and I'll introduce non-null
+; variables which start with a question mark '?'.
+(defn query-0-2
+  []
+  (?<- (stdout)
+       [?column-one !column-two]
+       (source-data ?column-one !column-two)))
+
+; (query-0-2)
+
+; Executing the above gives:
+;   RESULTS
+;   -----------------------
+;   _dAtA wITh_   _twO cOlumns_
+;   _some rows_   null
+;   _And it AlSo_ _hAs four rows_
+;   -----------------------
+;
+; as ?column-one cannot be nil but !column-two can.
+
+(defn query-0-3
+  []
+  (?<- (stdout)
+       [!column-one ?column-two]
+       (source-data !column-one ?column-two)))
+
+; (query-0-3)
+
+; Executing the above gives:
+;   RESULTS
+;   -----------------------
+;   _dAtA wITh_   _twO cOlumns_
+;   null          _contain nils_
+;   _And it AlSo_ _hAs four rows_
+;   -----------------------
+;
+; as now ?column-two cannot but !column-one can.
 
 ; -----------------------
 ; Defining queries as functions
@@ -100,14 +146,14 @@
       ;   :> defines the list of output variables assigned the output of the
       ;      function.
       ;
-      ; The astute among you may notice I've been assigning data to variables
-      ; without the use of :> before. Cascalog is fairly intelligent and if
-      ; your function takes no arguments it assumes everything is output, as
-      ; has been the case so far. Otherwise it assumes everything is an input
-      ; until it comes across the :> macro. The :< are rarely required and I
-      ; almost never use them. I do tend to be explicit about :> so the above
-      ; is not my normal coding style. I don't know what the canonical is,
-      ; probably to use the implicit useage where possible. Who likes typing ;)
+      ; Ymay notice I've been assigning data to variables without the use of
+      ; :> before. Cascalog is fairly intelligent and if your function takes no
+      ; arguments it assumes everything is output, as has been the case so far.
+      ; Otherwise it assumes everything is an input until it comes across the
+      ; :> macro. The :< are rarely required and I almost never use them. I do
+      ; tend to be explicit about :> so the above is not my normal coding style.
+      ; I don't know what the canonical is probably to use the implicit useage
+      ; where possible. Who likes typing ;)
       (s/lower-case :< ?c-one :> ?column-one)
       (s/upper-case :< ?c-two :> ?column-two)))
 
@@ -117,7 +163,7 @@
        [?column-one ?column-two]
        ((source-tap-with-sparkles) :> ?column-one ?column-two)))
 
-; (query-1)
+(query-1)
 
 ; Executing the above query gives us:
 ;   RESULTS
@@ -125,6 +171,9 @@
 ;   _data with_    _TWO COLUMNS_
 ;   _and it also_  _HAS TWO ROWS_
 ;   -----------------------
+;
+; and we've used non-nil variables for both as now we're only interested in
+; variables with data.
 
 ; This we can unit test... jumping to core_test.clj... and we're back.
 
