@@ -40,7 +40,7 @@
    ; console.
    (stdout)
 
-   ; The <- macro is used to define a query, where a query is a set of
+   ; The <- macro is used to define a generator, where a generator is a set of
    ; operations to transform the source data into the desired output for
    ; the sink.
    (<-
@@ -76,8 +76,8 @@
 ;   -----------------------
 
 ; A much more common way of writting the above is to use the ?<- macro which,
-; as you might guess, defines both defines and executes the query i.e. it's a
-; combination of the ?- and <- macros. It's slight less verbose.
+; as you might guess, defines both defines and executes the generator i.e. it's
+; a combination of the ?- and <- macros. It's slight less verbose.
 (defn query-0-1
   []
   (?<- (stdout)
@@ -210,9 +210,9 @@
         ; in the *correct order for the file* and the field is obviously
         ; associated with it's type.
         all-columns [["!user-id" Long]
-                     ["!item-id" Long]
+                     ["!movie-id" Long]
                      ["!rating" Long]
-                     ["!timestamp-raw" Long]]
+                     ["!timestamp" Long]]
 
         ; Getting the fields and types is straight forward. I've also used an
         ; array-map before and then you ask for keys and vals. Can't decide
@@ -222,7 +222,7 @@
 
         ; We are only interested in three of the columns so lets just select
         ; those.
-        returned-columns ["!user-id" "!item-id" "!rating"]
+        returned-columns ["!user-id" "!movie-id" "!rating"]
 
         ; A new function :)
         ; hfs-delimited is used to read delimited files off the HDFS file
@@ -245,15 +245,112 @@
     ; has been done with lists of strings. The best documentation for
     ; select-fields and hdf-delimited is still
     ; https://groups.google.com/forum/#!msg/cascalog-user/t0LsCp3hxiQ/LDlQVAFE8gUJ
-    (select-fields input-tap returned-columns)))
+    (<- returned-columns
+        ((select-fields input-tap returned-columns) :>> returned-columns))))
 
-; This is where the data lives, this just demos creating the object.
-; (user-data "resources/data/ml-100k/u.data")
+; Return the data for a single user, just as an example.
+(deffilterfn select-user
+  "A Cascalog filter function that returns true if the given user ID matches
+   a given ID number.
 
-; Now lets load the user item ratings which stores booleans as longs. Not
-; really ideal so lets convert them.
-; TODO Introduce defmapfn
-(defn long-to-bool
+   If a Cascalog filter returns true then the event is kept, if it returns
+   false then the event is skipped."
+  [required-id user-id]
+
+  ; This is a really trivial function and it is possible to use it inline
+  ; rather than wrapping it in a deffilterfn. Cascalog will do the expected
+  ; thing with standard Clojure functions.
+  (= user-id required-id))
+
+(defn query-2
+  []
+  (?<- (stdout)
+       [!user-id !movie-id !rating]
+
+       ; Use the filter function to select users with ID 196. This could have
+       ; been written inline as:
+       ;   (= 196 !user-id)
+       ; and as there is no output it is used a filter i.e.
+       ;   ((= 196 !user-id) :> ?the-user-id)
+       ; will not filter as the output is made available.
+       ;
+       ; Note it could not have been written:
+       ;   ((partial = 196) !user-id)
+       ; one because it's stupid but more importantly because Cascalog passes
+       ; the names of functions and variables hence it can't use anonamous
+       ; functions as they have no name!
+       (select-user 196 !user-id)
+       ((user-data "resources/data/ml-100k/u.data") !user-id !movie-id !rating)))
+
+; (query-2)
+
+; Executing the above query gives us:
+;   RESULTS
+;   -----------------------
+;   196 242  3
+;   196 393  4
+;   196 381  4
+;   196 251  3
+;   196 655  5
+;   196 67   5
+;   196 306  4
+;   196 238	 4
+;   196 663	 5
+;   196 111	 4
+;   196 580	 2
+;   196 25	 4
+;   196 286	 5
+;   196 94	 3
+;   196 692	 5
+;   196 8    5
+;   196 428  4
+;   196 1118 4
+;   196 70   3
+;   196 66   3
+;   196 257  2
+;   196 108  4
+;   196 202  3
+;   196 340  3
+;   196 287  3
+;   196 116  3
+;   196 382  4
+;   196 285  5
+;   196 1241 3
+;   196 1007 4
+;   196 411  4
+;   196 153  5
+;   196 13   2
+;   196 762  3
+;   196 173  2
+;   196 1022 4
+;   196 845  4
+;   196 269  3
+;   196 110  1
+;   -----------------------
+;
+; and we've used non-nil variables for both as now we're only interested in
+; variables with data.
+
+(defn query-2-1
+  []
+  (?<- (stdout)
+
+       ; In this case perhaps a more sensible way of filter is to specific a
+       ; constant for the user ID rather than a variable. In the end why return the
+       ; ID when we know it's 196 :)
+       [!movie-id !rating]
+       ((user-data "resources/data/ml-100k/u.data") 196 !movie-id !rating)))
+
+; This gives the same output as query-2.
+; (query-2-1)
+
+; Cascalog has two mapper functions, one takes a set of arguments and returns a
+; single tuple with the new variables and is used to add new fields to an event.
+; The other is used to create new events by returning a sequence of tuples.
+; Here I'm demonstrating the former using defmapfn. When we load the user item
+; ratings the booleans are stored as longs which is not ideal so lets convert
+; them.
+(defmapfn long-to-bool
   "Converts zero to false and one to true. Gets unhappy otherwise."
   [& args]
   (map #(case %
@@ -261,7 +358,7 @@
          1 true
          nil) args))
 
-(defn user-item
+(defn user-item-bools
   "Retuns a source tap for the user item ratings. Takes a path to the dataset."
   [src]
   (let [; Told you I've experimented with array-map. The order is important
@@ -316,7 +413,9 @@
                                   "!western-raw" "!western")]
     (<- ; I can still use the symbol form even when dealing with strings.
         ; Note after all that bool work we don't want them!
-        [!movie-id !movie-title]
+        [!movie-id !movie-title !action !adventure !animation !childrens
+         !comedy !crime !documentary !drama !fantasy !film-noir !horror
+         !musical !mystery !romance !sci-fi !thriller !war !western]
 
         ; There are :<< and :<< marcos which mimic the :< and :> marcos but
         ; instead of dealing with explicit symbols they deal with lists of
@@ -324,7 +423,7 @@
         ; especially when you want to keep them all. select-fields is only
         ; useful when you want to reduce the number.
         ((hfs-delimited src
-                        :delimiter "\t"
+                        :delimiter "|"
                         :outfields fields
                         :classes classes) :>> fields)
 
@@ -336,8 +435,177 @@
         (long-to-bool :<< (keys fields-to-bool)
                       :>> (vals fields-to-bool)))))
 
-; This is where the data lives, this just demos creating the object.
-; (user-item "resources/data/ml-100k/u.data")
+(defn query-3
+  []
+  (let [fields [1 ; Neat filtering on the movie ID in our field list.
+                "!movie-title"
+                "!action"
+                "!adventure"
+                "!animation"
+                "!childrens"
+                "!comedy"
+                "!crime"
+                "!documentary"
+                "!drama"
+                "!fantasy"
+                "!film-noir"
+                "!horror"
+                "!musical"
+                "!mystery"
+                "!romance"
+                "!sci-fi"
+                "!thriller"
+                "!war"
+                "!western"]]
+    (?<- (stdout)
+         [!movie-title !action "!childrens"]
+         ((user-item-bools "resources/data/ml-100k/u.item") :>> fields))))
+
+; (query-3)
+
+; Executing the above query gives us:
+;   RESULTS
+;   -----------------------
+;   Toy Story (1995) false true
+;   -----------------------
+;
+; Turns out Toy Story isn't an action movie, it's a childrens movie!
+
+(defn user-item
+  "Retuns a source tap for the user item ratings returing the movie ID and title."
+  [src]
+  (let [all-columns (array-map "!movie-id" Long
+                               "!movie-title" String
+                               "!release-date" String
+                               "!video-release-date" String
+                               "!imdb-url" String
+                               "!unknown" String ;; really?!
+                               "!action-raw" Long
+                               "!adventure-raw" Long
+                               "!animation-raw" Long
+                               "!childrens-raw" Long
+                               "!comedy-raw" Long
+                               "!crime-raw" Long
+                               "!documentary-raw" Long
+                               "!drama-raw" Long
+                               "!fantasy-raw" Long
+                               "!film-noir-raw" Long
+                               "!horror-raw" Long
+                               "!musical-raw" Long
+                               "!mystery-raw" Long
+                               "!romance-raw" Long
+                               "!sci-fi-raw" Long
+                               "!thriller-raw" Long
+                               "!war-raw" Long
+                               "!western-raw" Long)
+        fields (keys all-columns)
+        classes (vals all-columns)]
+    (<- [!movie-id !movie-title]
+        ((hfs-delimited src
+                        :delimiter "|"
+                        :outfields fields
+                        :classes classes) :>> fields))))
+
+(defn query-3-1
+  []
+  (let [fields [1 ; Neat filtering on the movie ID in our field list.
+                "!movie-title"]]
+    (?<- (stdout)
+         [!movie-title]
+         ((user-item "resources/data/ml-100k/u.item") :>> fields))))
+
+; (query-3-1)
+
+; Executing the above query gives us:
+;   RESULTS
+;   -----------------------
+;   Toy Story (1995)
+;   -----------------------
+;
+; As we're not interested in the genre for this exercise!
+
+
+; Now we need to combine these two independent sources with a common field
+; together into one data set.
+(defn user-ratings
+  "Returns a generator over the user item and data. Give the User's rating for
+   each movie."
+  [u-data-path u-item-path]
+  (<- [!user-id !movie-id !movie-title !rating]
+
+      ; Cascalog will automatically perform an SQL like inner join across
+      ; generators. You just need to specify the common fields to join across
+      ; which in this case is the movie ID. Now we return the merged data sets.
+      ((user-data u-data-path) !user-id !movie-id !rating)
+      ((user-item u-item-path) !movie-id !movie-title)))
+
+(defn query-4
+  []
+  (?<- (stdout)
+
+       ; I don't want any null entries in this query. Using the ? variables to
+       ; filter them out.
+       [?movie-id ?movie-title ?rating]
+       ((user-ratings "resources/data/ml-100k/u.data"
+                      "resources/data/ml-100k/u.item") 196 ?movie-id ?movie-title ?rating)))
+
+; (query-4)
+
+; Executing the above query gives us:
+;   RESULTS
+;   -----------------------
+;   8    Babe (1995)                                                         5
+;   13   Mighty Aphrodite (1995)                                             2
+;   25   Birdcage, The (1996)                                                4
+;   66   While You Were Sleeping (1995)                                      3
+;   67   Ace Ventura: Pet Detective (1994)                                   5
+;   70   Four Weddings and a Funeral (1994)                                  3
+;   94   Home Alone (1990)                                                   3
+;   108  Kids in the Hall: Brain Candy (1996)                                4
+;   110  Operation Dumbo Drop (1995)                                         1
+;   111  Truth About Cats & Dogs, The (1996)                                 4
+;   116  Cold Comfort Farm (1995)                                            3
+;   153  Fish Called Wanda, A (1988)                                         5
+;   173  Princess Bride, The (1987)                                          2
+;   202  Groundhog Day (1993)                                                3
+;   238  Raising Arizona (1987)                                              4
+;   242  Kolya (1996)                                                        3
+;   251  Shall We Dance? (1996)                                              3
+;   257  Men in Black (1997)                                                 2
+;   269  Full Monty, The (1997)                                              3
+;   285  Secrets & Lies (1996)                                               5
+;   286  English Patient, The (1996)                                         5
+;   287  Marvin's Room (1996)                                                3
+;   306  Mrs. Brown (Her Majesty, Mrs. Brown) (1997)                         4
+;   340  Boogie Nights (1997)                                                3
+;   381  Muriel's Wedding (1994)                                             4
+;   382  Adventures of Priscilla, Queen of the Desert, The (1994)            4
+;   393  Mrs. Doubtfire (1993)                                               4
+;   411  Nutty Professor, The (1996)                                         4
+;   428  Harold and Maude (1971)                                             4
+;   580  Englishman Who Went Up a Hill, But Came Down a Mountain, The (1995) 2
+;   655  Stand by Me (1986)                                                  5
+;   663  Being There (1979)                                                  5
+;   692  American President, The (1995)                                      5
+;   762  Beautiful Girls (1996)                                              3
+;   845  That Thing You Do! (1996)                                           4
+;   1007 Waiting for Guffman (1996)                                          4
+;   1022 Fast, Cheap & Out of Control (1997)                                 4
+;   1118 Up in Smoke (1978)                                                  4
+;   1241 Van, The (1996)                                                     3
+;   -----------------------
+;
+; So now we have all the movies user 196 rated.
+
+; At this point it is worth mentioning that Cascalog's third variable type
+; starts with a leading !! e.g. !!ratings and is used to indicating that an
+; outer rather than inner join should be used to join generators. It isn't
+; needed at the moment and I couldn't think of a good trivial example with the
+; data set so have left it out of this tutorial.
+
+; -----------------------
+; The Recommender
+;
 
 
 (defn -main
