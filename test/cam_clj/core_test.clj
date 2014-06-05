@@ -16,5 +16,5 @@
  ; straight to the sink and thus input and output is obviously the same.
  ?source-tap              ?expected-data
  source-data              source-data
-; source-tap-with-sparkles source-data
- )
+ source-tap-with-sparkles [["_data with_"   "_TWO COLUMNS_"]
+                           ["_and it also_" "_HAS TWO ROWS_"]])
