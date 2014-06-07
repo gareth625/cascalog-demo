@@ -1,7 +1,11 @@
 (ns cam-clj.core
   (:require [cascalog.api :refer :all]
             [cascalog.more-taps :refer [hfs-delimited]]
-            [clojure.string :as s])
+            [clojure.data.priority-map :refer [priority-map priority-map-by]]
+            [clojure.set :as set]
+            [clojure.string :as s]
+            [incanter.core :refer [abs]]
+            [incanter.stats :refer [correlation euclidean-distance]])
   (:gen-class))
 
 ; -----------------------
@@ -606,8 +610,164 @@
 ; -----------------------
 ; The Recommender
 ;
+; I've been a tad lazy, or perhaps helpful, by simply reimplementing the
+; example recommender built for one of the Meetup's coding dojos. It's lazy
+; because I didn't have to think about the implementation and helpful as it is
+; comparable to something some may have done before.
+;
+; In my defence I have done some work as I've reimplemented it in Cascalog and
+; hopefully it's something you can compare to the original, found here:
+; https://github.com/cam-clj/Recommendations/blob/example-solution/.
+
+(def user-data-path "resources/data/ml-100k/u.data")
+(def user-item-path "resources/data/ml-100k/u.item")
+
+; As the first step we need a query that returns the similarity between pairs
+; of users. The original recommender used a nested map structure. It used a map
+; with the user ID as the key and value of a map linking movie ID to it's
+; rating. In Cascalog we pass around tuples containing columns with dealing
+; with mapper functions and for the reducers there is a tuple containing each
+; row and the columns of that row are stored in a tuple. Most of this happens
+; behind the scenes and so we end up interacting with named variables but it
+; does help to have this mental model of what is being passed around.
+
+; Calculating the similarity between two users.
+; This code has been, pretty much, directly taken from the original
+; recommender. I've had to make a small change as we're dealing with different
+; data structures.
+(defn build-sim-fn
+  "Given a function `f` to score two sets of ratings for similarity,
+  return a function that takes a map of ratings and two people, and
+  returns their similarity score."
+  [f]
+  (fn [ratings]
+    (if ((comp seq first) ratings)
+      (f (map (fn [[_ r1 _]] r1) ratings) (map (fn [[_ _ r2]] r2) ratings))
+      0)))
+
+; A similarity function based on Euclidean distance
+(def sim-euclidean (build-sim-fn #(/ 1 (+ 1 (euclidean-distance %1 %2)))))
+
+; A similarity function based on Pearson correlation. We scale the correlation
+; (which is between -1 and 1) to give a value between 0 and 1, so it's on the
+; same scale as sim-euclidean.
+(def sim-pearson (build-sim-fn #(/ (+ 1 (correlation %1 %2)) 2)))
+
+; Here we introduce a new macro. This is the reducer side of things. It is
+; given all the values for a set of keys. Hopefully it will become clearer
+; when it's called.
+(defbufferfn sim-euclidean-buffer
+  "Returns the euclidean similarity for a pair of users."
+  [ratings]
+  [(sim-euclidean ratings)])
+
+(defbufferfn sim-pearson-buffer
+  "Returns the pearson similarity for a pair of users."
+  [ratings]
+  (sim-pearson ratings))
+
+(defn similarity
+  "Returns the set of movies that two users have in common from the ratings
+   source tap."
+  [ratings]
+  (<- [?user-one ?user-two ?similarity]
+      ((select-fields ratings ["!user-id" "!movie-id" "!rating"]) ?user-one ?movie-id ?rating-one)
+      ((select-fields ratings ["!user-id" "!movie-id" "!rating"]) ?user-two ?movie-id ?rating-two)
+      (not= ?user-one ?user-two)
+      (sim-euclidean-buffer ?movie-id ?rating-one ?rating-two :> ?similarity)))
+
+(defn query-5
+  []
+  (let [ratings (user-ratings user-data-path user-item-path)]
+    (?<- (stdout)
+         [?user-one ?user-two ?similarity]
+
+         ; Just pick two users to save flooding the console.
+         ((similarity ratings) ?user-one ?user-two ?similarity))))
+
+(query-5)
+
+; The first query I will write is going to select all the movies that a user
+; has not rated and then provide a predicted rating based on the similarity to
+; other users who have rated the movie.
+; For this we'll need two new generators, one to return all the unrated movies
+; for a given user; and another to return all the rated movies by all the other
+; users.
+(defn unrated-movies
+  "Returns the list of movies that a user has not rated."
+  [user-id user-data]
+  (<- [?movie-id ?movie-title]
+
+      ; Get a list of IDs that a user has rated.
+      (user-data user-id ?movie-id ?rating)))
 
 
+
+(defn common-ratings
+  "Given a `ratings` map and two people, return the set of ratings
+  they have in common."
+  [ratings p1 p2]
+  (let [p1-keys (set (keys (ratings p1)))
+        p2-keys (set (keys (ratings p2)))]
+    (set/intersection p1-keys p2-keys)))
+
+; We use a priority map to accumulate the top n users. This is a map sorted on
+; value, so the first element of the map (returned by `peek`) has the smallest
+; value, and `pop` removes this entry from the map. Once the accumulator has
+; grown to `n` entries, we compare the next score with the first entry and, if
+; it is bigger, pop off the smaller entry and add the new one. Otherwise, we
+; ignore the new entry and return the accumulator unchanged.
+
+(defn top-n-similar-users
+  "Find the `n` users most similar to `p`, where the similarity between
+  two users is computed by `sim-fn`. Return a map keyed by user id
+  whose value is the similarity score for that user."
+  [sim-fn ratings p n]
+  (reduce (fn [accum p']
+            (let [s (sim-fn ratings p p')]
+              (cond
+               (< (count accum) n)      (conj accum [p' s])
+               (> s (val (peek accum))) (conj (pop accum) [p' s])
+               :else                    accum)))
+          (priority-map)
+          (remove #{p} (keys ratings))))
+
+(defn score-for
+  "Given a map of friends' similarity scores, return the weighted score for `item`."
+  [ratings friends item]
+  (loop [n 0 d 1 friends (seq friends)]
+    (if friends
+      (let [[friend-id friend-similarity] (first friends)]
+        (if-let [friend-rating (get-in ratings [friend-id item])]
+          (recur (+ n (* friend-rating friend-similarity)) (+ d (abs friend-similarity)) (next friends))
+          (recur n d (next friends))))
+      (/ n d))))
+
+(defn recommendations-for
+  "Return a sorted sequence of recommendations for `p`, with the highest recommendation first."
+  ([sim-fn ratings p]
+     (recommendations-for sim-fn ratings p (count ratings)))
+  ([sim-fn ratings p n]
+     (let [friends (top-n-similar-users sim-fn ratings p n)
+           unseen  (remove (ratings p) (reduce set/union (map (comp set keys ratings) (keys friends))))
+           ranked  (into (priority-map-by >)
+                         (map vector unseen (map (partial score-for ratings friends) unseen)))]
+       (keys ranked))))
+
+;; (defn query-5
+;;   "This returns the predicted movie ratings for all the movie a user has not rated."
+;;   [user-id]
+;;   (?<- (stdout)
+;;        [?movie-title ?predicted-rating]
+;;        (user)
+;;        ))
+
+; (query-5)
+
+; -----------------------
+; Main
+;
+; I'm sure I'll find something to do with this :P
 (defn -main
   "The project's main function."
   [& args]

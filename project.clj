@@ -5,6 +5,8 @@
   :aot [cam-clj.core]
   :dependencies [[org.clojure/clojure "1.5.1"]
                  [cascalog "2.1.0"]
+                 [incanter "1.5.4"]
+                 [org.clojure/data.priority-map "0.0.5"]
                  [org.clojure/tools.cli "0.3.1"]]
   :dev-dependencies [[cascalog/midje-cascalog "1.10.1"]
                      [midje "1.6.3"]]
