@@ -619,20 +619,26 @@
 ; The original can be found here:
 ; https://github.com/cam-clj/Recommendations/blob/example-solution/.
 
-
 ; As the first step we need a query that returns the similarity between pairs
-; of users. The original recommender used a nested map structure. It used a map
-; with the user ID as the key and value of a map linking movie ID to it's
-; rating. In Cascalog we pass around tuples containing columns with dealing
-; with mapper functions and for the reducers there is a tuple containing each
-; row and the columns of that row are stored in a tuple. Most of this happens
-; behind the scenes and so we end up interacting with named variables but it
-; does help to have this mental model of what is being passed around.
+; of users. The original recommender used a nested map structure i.e. a map
+; with the user ID as the key and value of a map linking the user's rated movie
+; ID to it's rating.
+;
+; In Cascalog we pass around tuples containing columns when dealing with mapper
+; functions. In the above example it's equivalent to the map containing movie
+; ID and rating, in this case 2-tuples are passed to functions defined by e.g.
+; the defmapfn or deffilterfn macros. Of course Cascalog has a macro for
+; functions that run as reducers and these are given all the 2-tuples (more
+; generally n-tuples) in a sequence. In order to define aggregation functions
+; we can use the deffilterfn macro.
 
 ; Calculating the similarity between two users.
 ; This code has been, pretty much, directly taken from the original
 ; recommender. I've had to make a small change as we're dealing with different
-; data structures.
+; data structures. It's just pure Clojure and has actually become a biit clunky
+; now as I haven't been able to map it's general nature to Cascalog well! Still
+; I'd like to stick closely to the original recommender code and leave it as an
+; exercise to the (more experienced) reader e.g. future Me :)
 (defn build-sim-fn
   "Given a function `f` to score two sets of ratings for similarity,
   return a function that takes a map of ratings and two people, and
@@ -641,7 +647,7 @@
   (fn [ratings]
     (if ((comp seq first) ratings)
       (f (map (fn [[_ r1 _]] r1) ratings) (map (fn [[_ _ r2]] r2) ratings))
-      0)))
+      nil)))
 
 ; A similarity function based on Euclidean distance
 (def sim-euclidean (build-sim-fn #(/ 1 (+ 1 (euclidean-distance %1 %2)))))
@@ -651,39 +657,145 @@
 ; same scale as sim-euclidean.
 (def sim-pearson (build-sim-fn #(/ (+ 1 (correlation %1 %2)) 2)))
 
-; Here we introduce a new macro. This is the reducer side of things. It is
-; given all the values for a set of keys. Hopefully it will become clearer
-; when it's called.
+; Now we define our Cascalog aggregator which take a 1-tuple containing
+; 3-tuples i.e.
+;   [[movie-id-1 user-1-rating-1 user-2-rating-1]
+;    [movie-id-2 user-1-rating-2 user-2-rating-2]
+;    ...
+;    [movie-id-n user-1-rating-n user-2-rating-n]]
 (defbufferfn sim-euclidean-buffer
   "Returns the euclidean similarity for a pair of users."
   [ratings]
+
+  ; Note that I'm returning a tuple. Aggregators as expected to return a
+  ; sequence of n-tuples which are unpacked to output variables. Here I'm
+  ; returning a 1-tuple of the euclidean similarity of two users. It can be
+  ; nil.
   [(sim-euclidean ratings)])
 
+; You can see with my names I've ended up making things a bit clunky. Just wait
+; until the next version ;) It would help a bit if this wasn't all in one file!
 (defbufferfn sim-pearson-buffer
   "Returns the pearson similarity for a pair of users."
   [ratings]
-  (sim-pearson ratings))
+  [(sim-pearson ratings)])
+
+; The original recommender has a common ratings function which I've
+; reimplemented as a Cascalog generator.
+(defn common-ratings
+  "Returns the set of ratings that all each pair of users has in common from
+   the list of ratings."
+  [ratings]
+  (<- [?user-one ?user-two ?movie-id ?rating-one ?rating-two]
+
+      ; Here we create two generators which output the same ratings datasets
+      ; (note I'm providing user-ratings but it could equally be user-data
+      ; due to the user of select-fields) and by performing an inner join on
+      ; the movie ID we get a new dataset where each row contains user one,
+      ; user two and their ratings for that movie i.e. we have access to the
+      ; 5-tuple [movie-id user-one user-two rating-one rating-two].
+      ((select-fields ratings ["!user-id" "!movie-id" "!rating"]) ?user-one ?movie-id ?rating-one)
+      ((select-fields ratings ["!user-id" "!movie-id" "!rating"]) ?user-two ?movie-id ?rating-two)))
 
 (defn similarity
   "Returns the set of movies that two users have in common from the ratings
-   source tap."
-  [ratings]
-  (<- [?user-one ?user-two ?similarity]
-      ((select-fields ratings ["!user-id" "!movie-id" "!rating"]) ?user-one ?movie-id ?rating-one)
-      ((select-fields ratings ["!user-id" "!movie-id" "!rating"]) ?user-two ?movie-id ?rating-two)
-      (not= ?user-one ?user-two)
-      (sim-euclidean-buffer ?movie-id ?rating-one ?rating-two :> ?similarity)))
+   source tap. The similarity function to use must be provided."
+  [ratings similarity-fn]
+  (<- [?user-one ?user-two !similarity]
+      ((common-ratings ratings) ?user-one ?user-two ?movie-id ?rating-one ?rating-two)
+
+      ; Now the similarity function we want to use has been passed into the
+      ; function so we can call that and send the output to a new !similarity
+      ; variable. I sneakily changed the definition of our ratings function to
+      ; return nil (original 0) if two users have no movies in common. This
+      ; gives the caller the ability to filter them out using a ? variable
+      ; rather than a explicit not= 0 filter.
+      ;
+      ; The aggregator gets given a 1-tuple of the form:
+      ;   [[movie-id-1 rating-one-1 rating-two-1]
+      ;    [movie-id-2 rating-one-2 rating-two-2]
+      ;    ...
+      ;    [movie-id-n rating-one-n rating-two-n]]
+      ; where the trailing -# indicates the row number. What about the user
+      ; IDs, how can we tell who we're rating?! I suspect if you're more
+      ; familiar with map reduce it's more obvious but I tried to learn map
+      ; reduce through Cascalog so got confused with this bit :)
+      ;
+      ; We have acccess to the 5-tuple described above so when we call our
+      ; aggregator with only a subset of that tuple, in this case 3 variables,
+      ; each aggregator call gets given all the rows of those three variables
+      ; grouped by the two not given. This allows us to create a new dataset
+      ; of [?user-one ?user-two !similarity] with rows for all the unique
+      ; combinations of user one and two.
+      (similarity-fn ?movie-id ?rating-one ?rating-two :> !similarity)))
+
+; While the above is wonderful and returns all the data it takes a long time to
+; run on this laptop. I've no idea how many mappers nor reducers you get local
+; mode in Cascalog (well Cascading). In a proper hadoop setup it would be
+; speedy. Anyway, in order to demo this within my talk I've created a version
+; that only joins across two different users.
+(defn common-ratings-quick
+  "Returns the set of ratings that a specific pair of users have in common from
+   the list of ratings."
+  [user-one user-two ratings]
+  (<- [?user-one ?user-two ?movie-id ?rating-one ?rating-two]
+
+      ; Here, as user-one and user-two are constants, we're filtering the
+      ; datasets before the join. This massively reduces the amount of
+      ; computation required of my poor little laptop.
+      ((select-fields ratings ["!user-id" "!movie-id" "!rating"])
+       :> user-one ?movie-id ?rating-one)
+      ((select-fields ratings ["!user-id" "!movie-id" "!rating"])
+       :> user-two ?movie-id ?rating-two)
+
+      ; A naughty little way of converting values into Cascalog variables.
+      (identity user-one :> ?user-one)
+      (identity user-two :> ?user-two)))
+
+(defn similarity-quick
+  "Returns the set of movies that a pair of users have in common from the
+   ratings source tap. The similarity function to use must be provided."
+  [user-one user-two similarity-fn ratings]
+  (<- [?user-one ?user-two !similarity]
+      ((common-ratings-quick user-one user-two ratings)
+       :> ?user-one ?user-two ?movie-id ?rating-one ?rating-two)
+
+      ; None of this is good coding style it's just some trickery to have this
+      ; reduce the size of our two datasets down to just the movies rated for
+      ; two users but still return in a form that is compatible with our, more
+      ; sensible, similarity generator.
+
+      ; This is now only called once as there is only one unique combination of
+      ; user-one-id and user-two-id.
+      (similarity-fn ?movie-id ?rating-one ?rating-two :> !similarity)))
 
 (defn query-5
   []
   (let [ratings (user-ratings user-data-path user-item-path)]
     (?<- (stdout)
-         [?user-one ?user-two ?similarity]
+         [?user-one-id ?user-two-id ?similarity-eu ?similarity-pe]
 
-         ; Just pick two users to save flooding the console.
-         ((similarity ratings) ?user-one ?user-two ?similarity))))
+         ; Just pick two users to reduce computation time and save flooding
+         ; the console.
+         ((similarity-quick 196 186 sim-euclidean-buffer ratings)
+          :> ?user-one-id ?user-two-id ?similarity-eu)
+         ((similarity-quick 196 186 sim-pearson-buffer ratings)
+          :> ?user-one-id ?user-two-id ?similarity-pe)
 
-; (query-5)
+         ; We could do the following to just save flooding the console but we
+         ; still do all the computation.
+         ; ((similarity sim-euclidean-buffer ratings) 196 186 ?similarity-eu)
+         ; ((similarity sim-pearson-buffer ratings) 196 186 ?similarity-eu)
+         )))
+
+ (query-5)
+
+; Executing the above query gives us:
+;   RESULTS
+;   -----------------------
+;	  196	186	0.2612038749637414	0.5
+;   -----------------------
+
 
 ; The first query I will write is going to select all the movies that a user
 ; has not rated and then provide a predicted rating based on the similarity to
@@ -698,16 +810,6 @@
 
       ; Get a list of IDs that a user has rated.
       (user-data user-id ?movie-id ?rating)))
-
-
-
-(defn common-ratings
-  "Given a `ratings` map and two people, return the set of ratings
-  they have in common."
-  [ratings p1 p2]
-  (let [p1-keys (set (keys (ratings p1)))
-        p2-keys (set (keys (ratings p2)))]
-    (set/intersection p1-keys p2-keys)))
 
 ; We use a priority map to accumulate the top n users. This is a map sorted on
 ; value, so the first element of the map (returned by `peek`) has the smallest
