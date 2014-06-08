@@ -201,7 +201,8 @@
 ;    genre, a 0 indicates it is not; movies can be in several genres at once.
 ;    The movie ids are the ones used in the u.data data set.
 ;
-; So lets create some taps.
+; So lets create some taps. The first is from the user data.
+(def user-data-path "resources/data/ml-100k/u.data")
 
 (defn user-data
   "Returns a source tap for the user data set user ID and item ID columns.
@@ -284,9 +285,9 @@
        ; the names of functions and variables hence it can't use anonamous
        ; functions as they have no name!
        (select-user 196 !user-id)
-       ((user-data "resources/data/ml-100k/u.data") !user-id !movie-id !rating)))
+       ((user-data user-data-path) !user-id !movie-id !rating)))
 
-; (query-2)
+;  (query-2)
 
 ; Executing the above query gives us:
 ;   RESULTS
@@ -343,10 +344,13 @@
        ; constant for the user ID rather than a variable. In the end why return the
        ; ID when we know it's 196 :)
        [!movie-id !rating]
-       ((user-data "resources/data/ml-100k/u.data") 196 !movie-id !rating)))
+       ((user-data user-data-path) 196 !movie-id !rating)))
 
 ; This gives the same output as query-2.
 ; (query-2-1)
+
+; Now a tap for the user items dataset.
+(def user-item-path "resources/data/ml-100k/u.item")
 
 ; Cascalog has two mapper functions, one takes a set of arguments and returns a
 ; single tuple with the new variables and is used to add new fields to an event.
@@ -463,7 +467,7 @@
                 "!western"]]
     (?<- (stdout)
          [!movie-title !action "!childrens"]
-         ((user-item-bools "resources/data/ml-100k/u.item") :>> fields))))
+         ((user-item-bools user-item-path) :>> fields))))
 
 ; (query-3)
 
@@ -516,7 +520,7 @@
                 "!movie-title"]]
     (?<- (stdout)
          [!movie-title]
-         ((user-item "resources/data/ml-100k/u.item") :>> fields))))
+         ((user-item user-item-path) :>> fields))))
 
 ; (query-3-1)
 
@@ -550,8 +554,7 @@
        ; I don't want any null entries in this query. Using the ? variables to
        ; filter them out.
        [?movie-id ?movie-title ?rating]
-       ((user-ratings "resources/data/ml-100k/u.data"
-                      "resources/data/ml-100k/u.item") 196 ?movie-id ?movie-title ?rating)))
+       ((user-ratings user-data-path user-item-path) 196 ?movie-id ?movie-title ?rating)))
 
 ; (query-4)
 
@@ -603,24 +606,19 @@
 
 ; At this point it is worth mentioning that Cascalog's third variable type
 ; starts with a leading !! e.g. !!ratings and is used to indicating that an
-; outer rather than inner join should be used to join generators. It isn't
-; needed at the moment and I couldn't think of a good trivial example with the
-; data set so have left it out of this tutorial.
+; outer rather than inner join should be used to join generators. I'm a bit
+; short of (writing) time so I may or may not come back to here and demo it
+; with a trivial example.
 
 ; -----------------------
 ; The Recommender
 ;
 ; I've been a tad lazy, or perhaps helpful, by simply reimplementing the
-; example recommender built for one of the Meetup's coding dojos. It's lazy
-; because I didn't have to think about the implementation and helpful as it is
-; comparable to something some may have done before.
-;
-; In my defence I have done some work as I've reimplemented it in Cascalog and
-; hopefully it's something you can compare to the original, found here:
+; example recommender built for one of the Meetup's coding dojos. This will,
+; perhaps, allow you to have a comparison to something done before in the Dojo.
+; The original can be found here:
 ; https://github.com/cam-clj/Recommendations/blob/example-solution/.
 
-(def user-data-path "resources/data/ml-100k/u.data")
-(def user-item-path "resources/data/ml-100k/u.item")
 
 ; As the first step we need a query that returns the similarity between pairs
 ; of users. The original recommender used a nested map structure. It used a map
@@ -685,7 +683,7 @@
          ; Just pick two users to save flooding the console.
          ((similarity ratings) ?user-one ?user-two ?similarity))))
 
-(query-5)
+; (query-5)
 
 ; The first query I will write is going to select all the movies that a user
 ; has not rated and then provide a predicted rating based on the similarity to
