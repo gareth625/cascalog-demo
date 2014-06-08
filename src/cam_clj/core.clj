@@ -700,7 +700,7 @@
 (defn similarity
   "Returns the set of movies that two users have in common from the ratings
    source tap. The similarity function to use must be provided."
-  [ratings similarity-fn]
+  [similarity-fn ratings]
   (<- [?user-one ?user-two !similarity]
       ((common-ratings ratings) ?user-one ?user-two ?movie-id ?rating-one ?rating-two)
 
@@ -780,21 +780,48 @@
          ((similarity-quick 196 186 sim-euclidean-buffer ratings)
           :> ?user-one-id ?user-two-id ?similarity-eu)
          ((similarity-quick 196 186 sim-pearson-buffer ratings)
-          :> ?user-one-id ?user-two-id ?similarity-pe)
+          :> ?user-one-id ?user-two-id ?similarity-pe))))
 
-         ; We could do the following to just save flooding the console but we
-         ; still do all the computation.
-         ; ((similarity sim-euclidean-buffer ratings) 196 186 ?similarity-eu)
-         ; ((similarity sim-pearson-buffer ratings) 196 186 ?similarity-eu)
-         )))
-
- (query-5)
+; (query-5)
 
 ; Executing the above query gives us:
 ;   RESULTS
 ;   -----------------------
 ;	  196	186	0.2612038749637414	0.5
 ;   -----------------------
+
+(defn query-5-1
+  "This returns the same output as query-5 but runs the full inner join.
+
+   Takes a while if running in local mode."
+  []
+  (let [ratings (user-ratings user-data-path user-item-path)]
+    (?<- (stdout)
+         [?user-one ?user-two ?similarity-eu ?similarity-pe]
+
+         ((similarity sim-euclidean-buffer ratings)
+          :> ?user-one ?user-two ?similarity-eu)
+         ((similarity sim-pearson-buffer ratings)
+          :> ?user-one ?user-two ?similarity-pe)
+
+         ; Now we filter on the two user IDs but have done the join twice and
+         ; that takes a while. I could structure this better so you only do the
+         ; once but I'm not sure you'd actually run a recommender like that.
+         ; This is just an example showing the two different values.
+         (= 196 ?user-one)
+         (= 186 ?user-two))))
+
+; I'm really slow, you've been warned!
+; (query-5-1)
+
+; Executing the above query gives us:
+;   RESULTS
+;   -----------------------
+;	  196	186	0.2612038749637414	0.5
+;   -----------------------
+;
+; which is the same as query-5 as expected :)
+
 
 
 ; The first query I will write is going to select all the movies that a user
