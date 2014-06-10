@@ -1,5 +1,6 @@
 (ns cam-clj.core
   (:require [cascalog.api :refer :all]
+            [cascalog.logic.ops :as ops]
             [cascalog.more-taps :refer [hfs-delimited]]
             [clojure.data.priority-map :refer [priority-map priority-map-by]]
             [clojure.set :as set]
@@ -822,21 +823,110 @@
 ;
 ; which is the same as query-5 as expected :)
 
+; After all that work to reduce the number down with the *-quick functions,
+; I've realised that I need a data set with four users in it for
+; experimentation.
+(defn filter-user-ids
+  [user-id]
 
+  ; The first four IDs I could see in u.data.
+  (#{196 186 22 244} user-id))
 
-; The first query I will write is going to select all the movies that a user
-; has not rated and then provide a predicted rating based on the similarity to
-; other users who have rated the movie.
-; For this we'll need two new generators, one to return all the unrated movies
-; for a given user; and another to return all the rated movies by all the other
-; users.
-(defn unrated-movies
-  "Returns the list of movies that a user has not rated."
-  [user-id user-data]
-  (<- [?movie-id ?movie-title]
+(defn user-ratings-reduced
+  "Returns a generator over the a subset of the user item and data. Give the
+   User's rating for each movie."
+  [u-data-path u-item-path]
+  (<- [!user-id !movie-id !movie-title !rating]
+      ((user-ratings u-data-path u-item-path) !user-id !movie-id !movie-title !rating)
+      (filter-user-ids !user-id)))
 
-      ; Get a list of IDs that a user has rated.
-      (user-data user-id ?movie-id ?rating)))
+(defn query-6
+ []
+ (?<- (stdout)
+      [!user-id !movie-id !movie-title !rating]
+      ((user-ratings-reduced user-data-path user-item-path)
+       :> !user-id !movie-id !movie-title !rating)))
+
+; (query-6)
+
+; Executing the above query gives us:
+;   RESULTS
+;   -----------------------
+;   244	1	Toy Story (1995)	4
+;   22	2	GoldenEye (1995)	2
+;   244	3	Four Rooms (1995)	5
+;   22	4	Get Shorty (1995)	5
+;   244	7	Twelve Monkeys (1995)	4
+;   196	8	Babe (1995)	5
+;   244	9	Dead Man Walking (1995)	5
+;   186	12	Usual Suspects, The (1995)	1
+;   244	13	Mighty Aphrodite (1995)	4
+;   ... many lines ...
+;   186	1385	Roseanna's Grave (For Roseanna) (1997)	2
+;   186	1399	Stranger in the House (1997)	2
+;   244	1428	SubUrbia (1997)	4
+;   244	1467	Saint of Fort Washington, The (1993)	5
+
+; Now we need the top n similar users for each user.
+(defn top-n-similar-users
+  "This takes a tuple of 2-tuples where each tuple will contain the ID of the
+   similar user and the similarity to that user. The top n similar users are
+   then returned."
+  []
+  )
+
+(defn top-n-similar-users
+  [n ratings]
+  (let [similarity-tap (similarity sim-euclidean-buffer ratings)]
+    (<- [?user-one ?user-two-top ?similarity-top]
+
+        ((similarity sim-euclidean-buffer ratings) ?user-one ?user-two ?similarity)
+
+        ((ops/limit n) ?similarity ?user-two :> ?similarity-top ?user-two-top))))
+
+(defn query-7
+  []
+  (let [n 2
+        ratings (user-ratings-reduced user-data-path user-item-path)]
+    (?<- (stdout)
+         [?user-one ?user-two ?similarity]
+         ((top-n-similar-users n ratings) ?user-one ?user-two ?similarity))))
+
+(query-7)
+
+; If we were to just ask for the similiarity for all users we would get:
+;   RESULTS
+;   -----------------------
+;   22	22  1.0                 0.9999999999999998
+;   22	186 0.10815240673485554 0.5293321664978604
+;   22	196 0.16952084719853724 0.6790223608430471
+;   22	244 0.07595595279317306 0.5917112513515389
+;   186	22  0.10815240673485554 0.5293321664978604
+;   186	186 1.0                 0.9999999999999998
+;   186	196 0.2612038749637414  0.5
+;   186	244 0.09535767393825997 0.41382063624711934
+;   196	22  0.16952084719853724 0.6790223608430471
+;   196	186 0.2612038749637414  0.5
+;   196	196 1.0                 1.0000000000000002
+;   196	244 0.20521309615767264 0.636545346920903
+;   244	22  0.07595595279317306 0.5917112513515388
+;   244	186 0.09535767393825997 0.4138206362471193
+;   244	196 0.20521309615767264 0.636545346920903
+;   244	244 1.0                 1.0000000000000004
+;   -----------------------
+;
+; However, executing the above query gives us:
+;   RESULTS
+;   -----------------------
+;   22	22	1.0
+;   22	186	0.10815240673485554
+;   186	22	0.10815240673485554
+;   186	186	1.0
+;   196	22	0.16952084719853724
+;   196	186	0.2612038749637414
+;   244	22	0.07595595279317306
+;   244	186	0.09535767393825997
+;   -----------------------
 
 ; We use a priority map to accumulate the top n users. This is a map sorted on
 ; value, so the first element of the map (returned by `peek`) has the smallest
@@ -881,15 +971,6 @@
                          (map vector unseen (map (partial score-for ratings friends) unseen)))]
        (keys ranked))))
 
-;; (defn query-5
-;;   "This returns the predicted movie ratings for all the movie a user has not rated."
-;;   [user-id]
-;;   (?<- (stdout)
-;;        [?movie-title ?predicted-rating]
-;;        (user)
-;;        ))
-
-; (query-5)
 
 ; -----------------------
 ; Main
